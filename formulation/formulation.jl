@@ -26,6 +26,7 @@ Pkg.instantiate()
 
 using JuMP
 using HiGHS
+using Dates
 
 function ler_arquivo(path)
     open(path, "r") do file
@@ -59,46 +60,33 @@ function main()
     set_optimizer_attribute(mo, "random_seed", seed)
     set_optimizer_attribute(mo, "time_limit", time_limit)
 
-    # n espaços com M tamanho
-    # m atrações[temática, dimensão]
-    # ti: temática da atração i, i = 1, ..., m
-    # di: dimensão da atração i, i = 1, ..., m
     n, M, T, m, atracoes = ler_arquivo(file_path)
 
-    total_dimension = sum(d for (_, d) in atracoes)
-    if total_dimension > n * M
-        println("Instância inviável: a soma das dimensões excede a capacidade total.")
-        return
+    # Variáveis:
+    @variable(mo, x[1:m, 1:n], Bin)  # x[i, j] = 1 se a atração i está no espaço j
+    @variable(mo, y[1:T, 1:n], Bin) # y[t, j] = 1 se temática t aparece no espaço j
+
+    # Restrições:
+    @constraint(mo, [i = 1:m], sum(x[i, j] for j in 1:n) == 1) # Cada atração é alocada em exatamente um espaço
+    @constraint(mo, [j = 1:n], sum(atracoes[i][2] * x[i, j] for i in 1:m) <= M) # A soma das dimensões das atrações em um espaço não pode ultrapassar sua capacidade
+
+    # y[t, j] = U x[i, j] para todo i em At, sendo At o conjunto de atrações da temática t
+    # y[t, j] >= x[i, j] / |At| para todo i em At
+    for t in 1:T
+        atracoes_tem = [i for i in 1:m if atracoes[i][1] == t]
+        @constraint(mo, [j = 1:n], y[t, j] >= sum(x[i, j] for i in atracoes_tem) / length(atracoes_tem))
     end
 
-    println("Parsed data:")
-    println("Spaces (n): $n")
-    println("Capacity per space (M): $M")
-    println("Thematic categories (T): $T")
-    println("Number of attractions (m): $m")
-    println("Total attraction dimension: $total_dimension")
+    # Obejtivo: minimizar a dispersão total
+    @objective(mo, Min, sum(y[t, j] for t in 1:T, j in 1:n))
 
-    # xij: 1 se a atração i é alocada no espaço j, 0 caso contrário
-    @variable(mo, x[1:m, 1:n], Bin)
-
-    # y[j, t] indica se espaço j tem alguma atração de temática t
-    @variable(mo, y[1:n, 1:T], Bin)
-
-    # para cada espaço j, se ele tem uma atração de temática t, y[j, t] = 1
-    @constraint(mo, [j = 1:n, t = 1:T], y[j, t] >= sum(x[i, j] for i in 1:m if atracoes[i][1] == t) / m)
-
-    # cada atração deve ser alocada em exatamente um espaço
-    @constraint(mo, [i = 1:m], sum(x[i, j] for j = 1:n) == 1)
-
-    # A soma das dimensões das atrações alocadas no espaço j não pode ultrapassar M
-    @constraint(mo, [j = 1:n], sum(atracoes[i][2] * x[i, j] for i = 1:m) <= M)
-
-    # Minimizar a dispersão somada de todas as atracoes
-    @objective(mo, Min, sum(sum(y[j, t] for j = 1:n) for t = 1:T))
-
+    start_time = now()
     optimize!(mo)
+    end_time = now()
+    tempo_usado = end_time - start_time
+    println("Tempo de execução: $tempo_usado")
 
-    if termination_status(mo) == MOI.OPTIMAL || termination_status(mo) == MOI.TIME_LIMIT
+    if has_values(mo)
         melhor_solucao = objective_value(mo)
 
         println("Melhor solução encontrada: $melhor_solucao")
@@ -110,13 +98,14 @@ function main()
         end
 
         println("Dispersão por temática:")
-        dispersao = [sum(value(y[j, t]) for j in 1:n) for t in 1:T]
+        dispersao = [value(sum(y[t, j] for j in 1:n)) for t in 1:T]
         for t in 1:T
             println("Temática $t: dispersão = $(dispersao[t])")
         end
     else
-        println("Não foi possível encontrar uma solução ótima dentro do limite de tempo.")
+        println("Não foi possível encontrar uma solução viável dentro do limite de tempo.")
     end
+
 end
 
 main()
