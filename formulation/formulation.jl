@@ -75,6 +75,7 @@ function main()
     for t in 1:T
         atracoes_tem = [i for i in 1:m if atracoes[i][1] == t]
         @constraint(mo, [j = 1:n], y[t, j] >= sum(x[i, j] for i in atracoes_tem) / length(atracoes_tem))
+        @constraint(mo, [j = 1:n], y[t, j] <= sum(x[i, j] for i in atracoes_tem))
     end
 
     # Obejtivo: minimizar a dispersão total
@@ -86,10 +87,17 @@ function main()
     tempo_usado = end_time - start_time
     println("Tempo de execução: $tempo_usado")
 
+    if termination_status(mo) == MOI.TIME_LIMIT
+        limite_superior = objective_bound(mo)
+        println("Limite superior: $limite_superior")
+    end
+
     if has_values(mo)
         melhor_solucao = objective_value(mo)
 
-        println("Melhor solução encontrada: $melhor_solucao")
+        # melhor solução arrendondada
+        x = round.(value.(melhor_solucao))
+        println("Melhor solução encontrada: $x")
 
         println("Atrações alocadas por espaço:")
         for j in 1:n
