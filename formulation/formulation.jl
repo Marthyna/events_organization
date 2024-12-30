@@ -99,17 +99,17 @@ function main()
         x = round.(value.(melhor_solucao))
         println("Melhor solução encontrada: $x")
 
-        println("Atrações alocadas por espaço:")
-        for j in 1:n
-            atracoes_alocadas = [i for i in 1:m if value(x[i, j]) > 0.5]
-            println("Espaço $j: $atracoes_alocadas")
-        end
+        # println("Atrações alocadas por espaço:")
+        # for j in 1:n
+        #     atracoes_alocadas = [i for i in 1:m if value(x[i, j]) > 0.5]
+        #     println("Espaço $j: $atracoes_alocadas")
+        # end
 
-        println("Dispersão por temática:")
-        dispersao = [value(sum(y[t, j] for j in 1:n)) for t in 1:T]
-        for t in 1:T
-            println("Temática $t: dispersão = $(dispersao[t])")
-        end
+        # println("Dispersão por temática:")
+        # dispersao = [value(sum(y[t, j] for j in 1:n)) for t in 1:T]
+        # for t in 1:T
+        #     println("Temática $t: dispersão = $(dispersao[t])")
+        # end
     else
         println("Não foi possível encontrar uma solução viável dentro do limite de tempo.")
     end
