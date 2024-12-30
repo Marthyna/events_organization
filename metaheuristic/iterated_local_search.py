@@ -84,10 +84,11 @@ import argparse
 
 
 class IteratedLocalSearch:
-    def __init__(self, file_path, seed, max_iterations) -> None:
+    def __init__(self, file_path, seed, max_iterations=None, max_time=None) -> None:
         self.file_path = file_path
         self.seed = seed
         self.max_iterations = max_iterations
+        self.max_time = max_time
         random.seed(self.seed)
 
     def __read_instance(self):
@@ -107,6 +108,14 @@ class IteratedLocalSearch:
         self.themes = [attr[0] for attr in attractions]
         self.dimensions = [attr[1] for attr in attractions]
 
+    def _termination_criterion(self, iteration, start_time=None):
+        if self.max_iterations is not None:
+            return iteration >= self.max_iterations
+        elif self.max_time is not None:
+            return time.time() - start_time >= self.max_time
+        else:
+            raise ValueError("No termination criterion specified.")
+
     def __calculate_dispersion(self, solution):
         theme_to_spaces = defaultdict(set)
         for space_idx, attractions in enumerate(solution):
@@ -122,9 +131,33 @@ class IteratedLocalSearch:
 
     def __generate_initial_solution(self):
         solution = [[] for _ in range(self.n)]
+        used_space = [0] * self.n
+
+        for idx, dimension in enumerate(self.dimensions):
+            for space_idx in range(self.n):
+                if used_space[space_idx] + dimension <= self.M:
+                    solution[space_idx].append(idx)
+                    used_space[space_idx] += dimension
+                    break
+
+        return solution
+
+    def __generate_initial_solution_greedy(self):
+        solution = [[] for _ in range(self.n)]
+        attractions_by_theme = defaultdict(list)
+
+        # group attractions by theme
         for attraction in range(self.m):
-            space_idx = random.randint(0, self.n - 1)
-            solution[space_idx].append(attraction)
+            attractions_by_theme[self.themes[attraction]].append(attraction)
+
+        # allocate attractions prioritizing the same theme in the same space
+        for theme, attractions in attractions_by_theme.items():
+            for attraction in attractions:
+                for space in solution:
+                    if sum(self.dimensions[att] for att in space) + self.dimensions[attraction] <= self.M:
+                        space.append(attraction)
+                        break
+
         return solution
 
     def __local_search(self, solution):
@@ -132,13 +165,14 @@ class IteratedLocalSearch:
         best_dispersion = self.__calculate_dispersion(solution)
 
         for space_idx in range(len(solution)):
-            for attraction in best_solution[space_idx]:
+            for attraction in list(best_solution[space_idx]):
                 for target_space in range(len(solution)):
                     if target_space != space_idx:
 
                         # Try moving an attraction
                         new_solution = [list(space) for space in best_solution]
-                        new_solution[space_idx].remove(attraction)
+                        if attraction in new_solution[space_idx]:
+                            new_solution[space_idx].remove(attraction)
                         new_solution[target_space].append(attraction)
 
                         if self.__is_feasible(new_solution):
@@ -150,19 +184,32 @@ class IteratedLocalSearch:
 
     def __perturbation(self, solution):
         perturbed_solution = [list(space) for space in solution]
+        num_changes = random.randint(2, max(2, self.m // 3))
 
-        for _ in range(2):  # perturb by swapping two random attractions
-            a, b = random.sample(range(self.m), 2)
-            space_a = next(
-                i for i, space in enumerate(perturbed_solution) if a in space
+        for _ in range(num_changes):
+            a = random.choice(range(self.m))  # random attraction
+
+            src_space = next(
+                (i for i, space in enumerate(perturbed_solution) if a in space), None
             )
-            space_b = next(
-                i for i, space in enumerate(perturbed_solution) if b in space
-            )
-            perturbed_solution[space_a].remove(a)
-            perturbed_solution[space_b].remove(b)
-            perturbed_solution[space_a].append(b)
-            perturbed_solution[space_b].append(a)
+            if src_space is None:
+                continue
+
+            dest_space = random.choice(range(self.n))
+
+            # remove from current space
+            perturbed_solution[src_space].remove(a)
+
+            # try adding to the destination space
+            if (
+                    sum(self.dimensions[att] for att in perturbed_solution[dest_space])
+                    + self.dimensions[a]
+                    <= self.M
+            ):
+                perturbed_solution[dest_space].append(a)
+            else:
+                perturbed_solution[src_space].append(a)
+
         return perturbed_solution
 
     def __acceptance_criterion(self, current, new):
@@ -185,15 +232,18 @@ class IteratedLocalSearch:
     def iterated_local_search(self):
         self.__read_instance()
 
-        current_solution = self.__generate_initial_solution()
+        start_time = time.time()
+
+        current_solution = self.__generate_initial_solution_greedy()
         current_solution = self.__local_search(current_solution)
         best_solution = current_solution
         best_dispersion = self.__calculate_dispersion(current_solution)
+        print("Dispersão inicial:")
+        print(best_dispersion)
 
-        start_time = time.time()
         iteration = 0
 
-        while not self.__termination_criterion(iteration):
+        while not self._termination_criterion(iteration, start_time):
             perturbed_solution = self.__perturbation(current_solution)
             local_solution = self.__local_search(perturbed_solution)
             local_dispersion = self.__calculate_dispersion(local_solution)
@@ -201,17 +251,13 @@ class IteratedLocalSearch:
             if local_dispersion < best_dispersion:
                 best_solution = local_solution
                 best_dispersion = local_dispersion
-
-                # log time and details of new best solution
                 elapsed_time = time.time() - start_time
                 formatted_solution = self.__format_solution(best_solution)
                 print(f"\n{elapsed_time:.2f}s | Dispersão: {best_dispersion}")
                 print("Solução Atual:")
                 print(formatted_solution)
 
-            current_solution = self.__acceptance_criterion(
-                current_solution, local_solution
-            )
+            current_solution = self.__acceptance_criterion(current_solution, local_solution)
             iteration += 1
 
         return best_solution, best_dispersion
@@ -224,12 +270,36 @@ if __name__ == "__main__":
     parser.add_argument("file_path", type=str, help="Path to the instance file.")
     parser.add_argument("seed", type=int, help="Random seed for reproducibility.")
     parser.add_argument(
-        "max_iterations", type=int, help="Maximum number of iterations."
+        "--termination-criterion",
+        type=str,
+        choices=["iterations", "time"],
+        required=True,
+        help="Choose termination criterion: 'iterations' or 'time'.",
+    )
+    parser.add_argument(
+        "--max-iterations",
+        type=int,
+        help="Maximum number of iterations (required if termination criterion is 'iterations').",
+    )
+    parser.add_argument(
+        "--max-time",
+        type=float,
+        help="Maximum time in seconds (required if termination criterion is 'time').",
     )
 
     args = parser.parse_args()
 
-    ils = IteratedLocalSearch(args.file_path, args.seed, args.max_iterations)
+    if args.termination_criterion == "iterations" and args.max_iterations is None:
+        parser.error("You must specify --max-iterations if termination criterion is 'iterations'.")
+    if args.termination_criterion == "time" and args.max_time is None:
+        parser.error("You must specify --max-time if termination criterion is 'time'.")
+
+    ils = IteratedLocalSearch(
+        file_path=args.file_path,
+        seed=args.seed,
+        max_iterations=args.max_iterations,
+        max_time=args.max_time,
+    )
 
     solution, dispersion = ils.iterated_local_search()
     formatted_solution = ils._IteratedLocalSearch__format_solution(solution)
